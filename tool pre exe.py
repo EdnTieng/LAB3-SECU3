@@ -12,7 +12,7 @@ else:
 
 # Define paths
 TOOLS_DIR = os.path.join(script_dir, "TOOLS")  # TOOLS directory containing KAPE and RECmd
-DEFAULT_OUTPUT_DIR = r"C:\KAPE_Output"  # Change this if needed
+DEFAULT_OUTPUT_DIR = r"C:\KAPE_Output"
 KAPE_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "KapeOutput")
 RECMD_OUTPUT_DIR = os.path.join(DEFAULT_OUTPUT_DIR, "Parsed_Registry")
 
@@ -28,7 +28,7 @@ os.makedirs(RECMD_OUTPUT_DIR, exist_ok=True)
 # Ask user for command input
 command = input("\nEnter command (collect / parse and merge / all): ").strip().lower()
 
-if command == "collect" or command == "all":
+if command in ["collect", "all"]:
     # Step 1: Run KAPE to extract registry hives
     kape_command = [
         kape_path,
@@ -40,28 +40,22 @@ if command == "collect" or command == "all":
 
     print("\n[+] Running KAPE to extract registry hives...")
     try:
-        subprocess.run(kape_command, check=True, capture_output=True, text=True)
+        subprocess.run(kape_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         print("[+] KAPE execution completed successfully.")
     except subprocess.CalledProcessError as e:
         print(f"[-] Error executing KAPE: {e}")
         print(e.stderr)
-        exit(1)
+        sys.exit(1)
 
-if command == "parse and merge" or command == "all":
+if command in ["parse and merge", "all"]:
     # Allow user to specify input and output paths
-    kape_input = input("\nEnter path to KAPE output (Press Enter to use default): ").strip()
-    output_path = input("Enter path to save parsed data (Press Enter to use default): ").strip()
-
-    if not kape_input:
-        kape_input = KAPE_OUTPUT_DIR
-    if not output_path:
-        output_path = RECMD_OUTPUT_DIR
-
+    kape_input = input("\nEnter path to KAPE output (Press Enter to use default): ").strip() or KAPE_OUTPUT_DIR
+    output_path = input("Enter path to save parsed data (Press Enter to use default): ").strip() or RECMD_OUTPUT_DIR
     os.makedirs(output_path, exist_ok=True)
 
-    # Step 2: Locate specific registry hives
+    # Step 2: Locate registry hives
     system32_config_path = os.path.join(kape_input, "C", "Windows", "System32", "config")
-    ntuser_path = os.path.join(kape_input, "C", "Users", os.getlogin(), "NTUSER.DAT")
+    users_folder = os.path.join(kape_input, "C", "Users")
 
     batch_mappings = {
         "SYSTEM": "DFIRBatch.reb",
@@ -74,12 +68,17 @@ if command == "parse and merge" or command == "all":
     hive_files = []
     expected_hives = ["SYSTEM", "SAM", "SECURITY", "SOFTWARE"]
 
-    if os.path.exists(ntuser_path):
-        hive_files.append(ntuser_path)
-        print(f"[DEBUG] Found NTUSER.DAT at {ntuser_path}")
+    # Step 2.1: Find NTUSER.DAT for all users
+    if os.path.exists(users_folder):
+        for user in os.listdir(users_folder):
+            user_path = os.path.join(users_folder, user, "NTUSER.DAT")
+            if os.path.exists(user_path):
+                hive_files.append(user_path)
+                print(f"[DEBUG] Found NTUSER.DAT for user '{user}' at {user_path}")
     else:
-        print("[-] ERROR: User's NTUSER.DAT not found.")
+        print("[-] ERROR: Users folder not found in extracted KAPE output.")
 
+    # Step 2.2: Find other registry hives in System32/config
     if os.path.exists(system32_config_path):
         for hive in expected_hives:
             hive_path = os.path.join(system32_config_path, hive)
@@ -114,8 +113,9 @@ if command == "parse and merge" or command == "all":
             print(f"[+] No batch file found. Using --sa for {hive_name}")
 
         try:
-            subprocess.run(recmd_command, check=True, capture_output=True, text=True)
+            result = subprocess.run(recmd_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             print(f"[+] Successfully parsed {hive}. Output saved in {output_csv}")
+
             if not os.path.exists(output_csv):
                 print(f"[-] ERROR: CSV file missing for {hive_name}.")
         except subprocess.CalledProcessError as e:
@@ -134,16 +134,16 @@ if command == "parse and merge" or command == "all":
             try:
                 df = pd.read_csv(file_path)
                 dfs.append(df)
-                print(f"Successfully read {file}")
+                print(f"[+] Successfully read {file}")
             except Exception as e:
-                print(f"Error reading {file}: {e}")
+                print(f"[-] ERROR reading {file}: {e}")
 
         if dfs:
             combined_df = pd.concat(dfs, ignore_index=True)
             combined_df.to_csv(output_filename, index=False)
-            print(f"\nAll CSV files have been combined into '{output_filename}'")
+            print(f"\n[+] All CSV files have been combined into '{output_filename}'")
         else:
-            print("No valid CSV files found to combine.")
+            print("[-] No valid CSV files found to combine.")
 
     combined_csv_filename = os.path.join(output_path, "combined_registry_data.csv")
     combine_csv_files(output_path, combined_csv_filename)
